@@ -7,48 +7,51 @@
 #define N 500 // Tamanho fixo da matriz
 
 // Função para carregar a matriz e o vetor de um arquivo
-void load_matrix_from_file(const char *filename, double matrix[N][N], double b[N], int n) {
+void load_matrix_from_file(const char *filename, double *matrix, double *b, int n) {
     FILE *file = fopen(filename, "r");
     if (!file) {
         perror("Erro ao abrir o arquivo para leitura");
         exit(EXIT_FAILURE);
     }
 
-    char line[N*6];
-    int row = 0;
+    char *line = NULL;  // Ponteiro para armazenar a linha
+    size_t len = 0;     // Tamanho do buffer da linha
+    int row = 0;        // Índice da linha
 
-    while (fgets(line, sizeof(line), file) && row < n) {
-        char *token = strtok(line, ",;");
+    while (getline(&line, &len, file) != -1 && row < n) {
+        char *token = strtok(line, ",;"); // Primeiro token da linha
         for (int col = 0; col < n; col++) {
             if (token) {
-                matrix[row][col] = atof(token);
+                matrix[row * n + col] = atof(token); // Armazena no vetor unidimensional
                 token = strtok(NULL, ",;");
             }
         }
         if (token) {
-            b[row] = atof(token);
+            b[row] = atof(token); // Último elemento da linha vai para o vetor b
         }
         row++;
     }
 
+    free(line); // Libera memória alocada para a linha
     fclose(file);
     printf("Matriz carregada do arquivo: %s\n", filename);
 }
 
+
 // Função para imprimir a matriz
-void print_matrix(double matrix[N][N], double b[N], int n) {
+void print_matrix(double *matrix, double *b, int n) {
     printf("Matriz A|b:\n");
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
-            printf("%6.2f ", matrix[i][j]);
+            printf("%6.2f ", matrix[i * n + j]); // Acesso como vetor unidimensional
         }
-        printf("| %6.2f\n", b[i]);
+        printf("| %6.2f\n", b[i]); // Imprime o elemento correspondente no vetor b
     }
     printf("\n");
 }
 
 // Função para imprimir a solução
-void print_solution(double x[N], int n) {
+void print_solution(double *x, int n) {
     printf("Solução do sistema (x):\n");
     for (int i = 0; i < n; i++) {
         printf("x[%d] = %6.2f\n", i, x[i]);
@@ -57,64 +60,77 @@ void print_solution(double x[N], int n) {
 }
 
 // Método de eliminação de Gauss
-void gaussian_elimination(double matrix[N][N], double b[N], double x[N], int n, int rank, int size) {
+void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank, int size) {
     for (int k = 0; k < n; k++) {
         int pivot_owner = k % size;
 
         if (rank == pivot_owner) {
-           /*  printf("Processo %d: Normalizando linha pivô %d\n", rank, k); */
+            // Normalizando a linha pivô
             for (int j = k + 1; j < n; j++) {
-                matrix[k][j] /= matrix[k][k];
+                matrix[k * n + j] /= matrix[k * n + k];
             }
-            b[k] /= matrix[k][k];
-            matrix[k][k] = 1.0;
+            b[k] /= matrix[k * n + k];
+            matrix[k * n + k] = 1.0;
         }
 
-        MPI_Bcast(&matrix[k][0], n, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
+        // Compartilhando linha pivô e vetor b entre os processos
+        MPI_Bcast(&matrix[k * n], n, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
         MPI_Bcast(&b[k], 1, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
 
+        // Atualização das linhas da matriz pelos processos
         for (int i = rank; i < n; i += size) {
             if (i > k) {
-                double factor = matrix[i][k];
+                double factor = matrix[i * n + k];
                 for (int j = k + 1; j < n; j++) {
-                    matrix[i][j] -= factor * matrix[k][j];
+                    matrix[i * n + j] -= factor * matrix[k * n + j];
                 }
                 b[i] -= factor * b[k];
-                matrix[i][k] = 0.0;
-                //printf("Processo %d: Atualizou linha %d\n", rank, i);
+                matrix[i * n + k] = 0.0;
             }
         }
 
-        /*MPI_Barrier(MPI_COMM_WORLD);
+        // Sincronização opcional (para debug ou análise intermediária)
+        /*
+        MPI_Barrier(MPI_COMM_WORLD);
         if (rank == 0) {
             printf("Matriz após etapa %d:\n", k);
             print_matrix(matrix, b, n);
-        }*/
+        }
+        */
     }
 
+    // Substituição reversa para encontrar as soluções
     for (int i = n - 1; i >= 0; i--) {
         if (rank == i % size) {
             x[i] = b[i];
             for (int j = i + 1; j < n; j++) {
-                x[i] -= matrix[i][j] * x[j];
+                x[i] -= matrix[i * n + j] * x[j];
             }
         }
         MPI_Bcast(&x[i], 1, MPI_DOUBLE, i % size, MPI_COMM_WORLD);
     }
 
-    /* MPI_Barrier(MPI_COMM_WORLD);
+    // Sincronização opcional (para verificar soluções parciais)
+    /*
+    MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
         printf("Solução parcial após substituição reversa:\n");
         print_solution(x, n);
-    } */
+    }
+    */
 }
 
 int main(int argc, char **argv) {
     int rank, size;
-    double matrix[N][N];
-    double b[N];
-    double x[N] = {0};
+    double *matrix;
+    double *b;
+    double *x;
     double t_inicial, t_final;
+
+    // Aloca memória para a matriz e vetores
+    matrix = (double *) malloc(N * N * sizeof(double));
+    b = (double *) malloc(N * sizeof(double));
+    x = (double *) malloc(N * sizeof(double));
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -149,7 +165,7 @@ int main(int argc, char **argv) {
         printf("\nSolução final (x):\n");
         print_solution(x, N);
         printf("Tempo de execução: %.6f segundos\n", t_final - t_inicial);
-    }
+    } 
 
     MPI_Finalize();
     return 0;
