@@ -1,21 +1,41 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <mpi.h>
 #include <math.h>
 
-// Define o tamanho da matriz fixa
-#define N 4
+#define N 500 // Tamanho fixo da matriz
 
-// Matriz e vetor fixos para teste
-double matrix[N][N] = {
-    {2, 1, -1, -3},
-    {-1, 3, 2, 1},
-    {3, -2, 1, 2},
-    {1, 2, -1, -1}
-};
+// Função para carregar a matriz e o vetor de um arquivo
+void load_matrix_from_file(const char *filename, double matrix[N][N], double b[N], int n) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        perror("Erro ao abrir o arquivo para leitura");
+        exit(EXIT_FAILURE);
+    }
 
-double b[N] = {8, 1, -4, -2};
+    char line[N*6];
+    int row = 0;
 
+    while (fgets(line, sizeof(line), file) && row < n) {
+        char *token = strtok(line, ",;");
+        for (int col = 0; col < n; col++) {
+            if (token) {
+                matrix[row][col] = atof(token);
+                token = strtok(NULL, ",;");
+            }
+        }
+        if (token) {
+            b[row] = atof(token);
+        }
+        row++;
+    }
+
+    fclose(file);
+    printf("Matriz carregada do arquivo: %s\n", filename);
+}
+
+// Função para imprimir a matriz
 void print_matrix(double matrix[N][N], double b[N], int n) {
     printf("Matriz A|b:\n");
     for (int i = 0; i < n; i++) {
@@ -27,6 +47,7 @@ void print_matrix(double matrix[N][N], double b[N], int n) {
     printf("\n");
 }
 
+// Função para imprimir a solução
 void print_solution(double x[N], int n) {
     printf("Solução do sistema (x):\n");
     for (int i = 0; i < n; i++) {
@@ -35,13 +56,13 @@ void print_solution(double x[N], int n) {
     printf("\n");
 }
 
+// Método de eliminação de Gauss
 void gaussian_elimination(double matrix[N][N], double b[N], double x[N], int n, int rank, int size) {
     for (int k = 0; k < n; k++) {
         int pivot_owner = k % size;
 
-        // Processo responsável pelo pivô
         if (rank == pivot_owner) {
-            printf("Processo %d: Normalizando linha pivô %d\n", rank, k);
+           /*  printf("Processo %d: Normalizando linha pivô %d\n", rank, k); */
             for (int j = k + 1; j < n; j++) {
                 matrix[k][j] /= matrix[k][k];
             }
@@ -49,11 +70,9 @@ void gaussian_elimination(double matrix[N][N], double b[N], double x[N], int n, 
             matrix[k][k] = 1.0;
         }
 
-        // Broadcast da linha pivô
         MPI_Bcast(&matrix[k][0], n, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
         MPI_Bcast(&b[k], 1, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
 
-        // Atualização das linhas abaixo do pivô
         for (int i = rank; i < n; i += size) {
             if (i > k) {
                 double factor = matrix[i][k];
@@ -62,19 +81,17 @@ void gaussian_elimination(double matrix[N][N], double b[N], double x[N], int n, 
                 }
                 b[i] -= factor * b[k];
                 matrix[i][k] = 0.0;
-                printf("Processo %d: Atualizou linha %d\n", rank, i);
+                //printf("Processo %d: Atualizou linha %d\n", rank, i);
             }
         }
 
-        // Impressão parcial da matriz
-        MPI_Barrier(MPI_COMM_WORLD);
+        /*MPI_Barrier(MPI_COMM_WORLD);
         if (rank == 0) {
             printf("Matriz após etapa %d:\n", k);
             print_matrix(matrix, b, n);
-        }
+        }*/
     }
 
-    // Substituição reversa
     for (int i = n - 1; i >= 0; i--) {
         if (rank == i % size) {
             x[i] = b[i];
@@ -85,39 +102,53 @@ void gaussian_elimination(double matrix[N][N], double b[N], double x[N], int n, 
         MPI_Bcast(&x[i], 1, MPI_DOUBLE, i % size, MPI_COMM_WORLD);
     }
 
-    // Impressão da solução parcial
-    MPI_Barrier(MPI_COMM_WORLD);
+    /* MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
         printf("Solução parcial após substituição reversa:\n");
         print_solution(x, n);
-    }
+    } */
 }
 
 int main(int argc, char **argv) {
     int rank, size;
-    double x[N] = {0}; // Inicializa o vetor solução com zeros
+    double matrix[N][N];
+    double b[N];
+    double x[N] = {0};
+    double t_inicial, t_final;
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    // Impressão inicial
+    printf("Processo %d de %d iniciado\n", rank, size);
+
     if (rank == 0) {
-        printf("Matriz inicial (A|b):\n");
-        print_matrix(matrix, b, N);
+        // Carrega a matriz do arquivo
+        const char *filename = "matrix.txt";
+        load_matrix_from_file(filename, matrix, b, N);
     }
 
-    // Broadcast dos dados iniciais
+    t_inicial = MPI_Wtime();
+
+    // Broadcast dos dados
     MPI_Bcast(matrix, N * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(b, N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    // Impressão inicial
+    if (rank == 0) {
+        printf("Matriz inicial carregada (A|b):\n");
+        //print_matrix(matrix, b, N);
+    }
 
     // Executa eliminação de Gauss
     gaussian_elimination(matrix, b, x, N, rank, size);
 
-    // Solução final
+    t_final = MPI_Wtime();
+
     if (rank == 0) {
         printf("\nSolução final (x):\n");
         print_solution(x, N);
+        printf("Tempo de execução: %.6f segundos\n", t_final - t_inicial);
     }
 
     MPI_Finalize();
