@@ -62,35 +62,51 @@ void print_solution(double *x, int n) {
 // Método de eliminação de Gauss
 void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank, int size) {
     for (int k = 0; k < n; k++) {
+        int pivot = k * n + k;
         int pivot_owner = k % size;
 
         if (rank == pivot_owner) {
             // Normalizando a linha pivô
             for (int j = k + 1; j < n; j++) {
-                matrix[k * n + j] /= matrix[k * n + k];
+                int current_column_inline = k * n + j;
+                matrix[current_column_inline] /= matrix[pivot];
             }
-            b[k] /= matrix[k * n + k];
-            matrix[k * n + k] = 1.0;
+            b[k] /= matrix[pivot];
+            matrix[pivot] = 1.0;
         }
 
         // Compartilhando linha pivô e vetor b entre os processos
-        MPI_Bcast(&matrix[k * n], n, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
-        MPI_Bcast(&b[k], 1, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
+        /* MPI_Bcast(&matrix[k * n], n, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD);
+        MPI_Bcast(&b[k], 1, MPI_DOUBLE, pivot_owner, MPI_COMM_WORLD); */
+
+        if (rank == pivot_owner) {
+            for (int i = 0; i < size; i++) {
+                if (i != rank) {
+                    MPI_Send(&matrix[k * n], n, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
+                    MPI_Send(&b[k], 1, MPI_DOUBLE, i, 0, MPI_COMM_WORLD);
+                }
+            }
+        } else {
+            MPI_Recv(&matrix[k * n], n, MPI_DOUBLE, pivot_owner, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&b[k], 1, MPI_DOUBLE, pivot_owner, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
 
         // Atualização das linhas da matriz pelos processos
         for (int i = rank; i < n; i += size) {
+            int first_line_element = i * n + k;
             if (i > k) {
-                double factor = matrix[i * n + k];
+                double factor = matrix[first_line_element];
                 for (int j = k + 1; j < n; j++) {
-                    matrix[i * n + j] -= factor * matrix[k * n + j];
+                    int current_column_inline = i * n + j;
+                    int pivot_column_inline = k * n + j;
+                    matrix[current_column_inline] -= factor * matrix[pivot_column_inline];
                 }
                 b[i] -= factor * b[k];
-                matrix[i * n + k] = 0.0;
+                matrix[first_line_element] = 0.0;
             }
         }
 
         // Sincronização opcional (para debug ou análise intermediária)
-        
         /* MPI_Barrier(MPI_COMM_WORLD);
         if (rank == 0) {
             printf("Matriz após etapa %d:\n", k);
@@ -100,14 +116,31 @@ void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank,
     }
 
     // Substituição reversa para encontrar as soluções
-    for (int i = n - 1; i >= 0; i--) {
+    /* for (int i = n - 1; i >= 0; i--) {
         if (rank == i % size) {
             x[i] = b[i];
             for (int j = i + 1; j < n; j++) {
-                x[i] -= matrix[i * n + j] * x[j];
+                int current_column_inline = i * n + j;  
+                x[i] -= matrix[current_column_inline] * x[j];
             }
         }
         MPI_Bcast(&x[i], 1, MPI_DOUBLE, i % size, MPI_COMM_WORLD);
+    } */
+   for (int i = n - 1; i >= 0; i--) {
+        if (rank == i % size) {
+            x[i] = b[i];
+            for (int j = i + 1; j < n; j++) {
+                int current_column_inline = i * n + j;  
+                x[i] -= matrix[current_column_inline] * x[j];
+            }
+            for (int n_proc = 0; n_proc < size; n_proc++) {
+                if (n_proc != rank) {
+                    MPI_Send(&x[i], 1, MPI_DOUBLE, n_proc, 0, MPI_COMM_WORLD);
+                }
+            }
+        } else {
+            MPI_Recv(&x[i], 1, MPI_DOUBLE, i % size, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
     }
 
     // Sincronização opcional (para verificar soluções parciais)
@@ -148,17 +181,17 @@ int main(int argc, char **argv) {
         load_matrix_from_file(filename, matrix, b, n);
     }
 
-    t_inicial = MPI_Wtime();
-
     // Broadcast dos dados
     MPI_Bcast(matrix, n * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(b, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     // Impressão inicial
-    if (rank == 0) {
+    /* if (rank == 0) {
         printf("Matriz inicial carregada (A|b):\n");
-        //print_matrix(matrix, b, N);
-    }
+        print_matrix(matrix, b, N);
+    } */
+
+    t_inicial = MPI_Wtime();
 
     // Executa eliminação de Gauss
     gaussian_elimination(matrix, b, x, n, rank, size);
