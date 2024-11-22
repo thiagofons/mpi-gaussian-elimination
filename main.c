@@ -4,7 +4,7 @@
 #include <mpi.h>
 #include <math.h>
 
-#define N 500 // Tamanho fixo da matriz
+#define N 3 // Tamanho fixo da matriz
 
 // Função para carregar a matriz e o vetor de um arquivo
 void load_matrix_from_file(const char *filename, double *matrix, double *b, int n) {
@@ -90,13 +90,13 @@ void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank,
         }
 
         // Sincronização opcional (para debug ou análise intermediária)
-        /*
-        MPI_Barrier(MPI_COMM_WORLD);
+        
+        /* MPI_Barrier(MPI_COMM_WORLD);
         if (rank == 0) {
             printf("Matriz após etapa %d:\n", k);
             print_matrix(matrix, b, n);
-        }
-        */
+        } */
+        
     }
 
     // Substituição reversa para encontrar as soluções
@@ -121,16 +121,20 @@ void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank,
 }
 
 int main(int argc, char **argv) {
-    int rank, size;
+    int rank, size, n = N;
     double *matrix;
     double *b;
     double *x;
     double t_inicial, t_final;
 
+    if (argc > 1) {
+        n = atoi(argv[1]);
+    }
+
     // Aloca memória para a matriz e vetores
-    matrix = (double *) malloc(N * N * sizeof(double));
-    b = (double *) malloc(N * sizeof(double));
-    x = (double *) malloc(N * sizeof(double));
+    matrix = (double *) malloc(n * n * sizeof(double));
+    b = (double *) malloc(n * sizeof(double));
+    x = (double *) malloc(n * sizeof(double));
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -141,14 +145,14 @@ int main(int argc, char **argv) {
     if (rank == 0) {
         // Carrega a matriz do arquivo
         const char *filename = "matrix.txt";
-        load_matrix_from_file(filename, matrix, b, N);
+        load_matrix_from_file(filename, matrix, b, n);
     }
 
     t_inicial = MPI_Wtime();
 
     // Broadcast dos dados
-    MPI_Bcast(matrix, N * N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(b, N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(matrix, n * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(b, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     // Impressão inicial
     if (rank == 0) {
@@ -157,13 +161,13 @@ int main(int argc, char **argv) {
     }
 
     // Executa eliminação de Gauss
-    gaussian_elimination(matrix, b, x, N, rank, size);
+    gaussian_elimination(matrix, b, x, n, rank, size);
 
     t_final = MPI_Wtime();
 
     if (rank == 0) {
         printf("\nSolução final (x):\n");
-        print_solution(x, N);
+        print_solution(x, n);
         printf("Tempo de execução: %.6f segundos\n", t_final - t_inicial);
     } 
 
