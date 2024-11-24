@@ -4,7 +4,7 @@
 #include <mpi.h>
 #include <math.h>
 
-#define N 3 // Tamanho fixo da matriz
+#define N 4 // Tamanho inicial fixo da matriz
 
 // Função para carregar a matriz e o vetor de um arquivo
 void load_matrix_from_file(const char *filename, double *matrix, double *b, int n) {
@@ -88,15 +88,6 @@ void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank,
                 matrix[i * n + k] = 0.0;
             }
         }
-
-        // Sincronização opcional (para debug ou análise intermediária)
-        
-        MPI_Barrier(MPI_COMM_WORLD);
-        if (rank == 0) {
-            printf("Matriz após etapa %d:\n", k);
-            print_matrix(matrix, b, n);
-        }
-        
     }
 
     // Substituição reversa para encontrar as soluções
@@ -109,15 +100,6 @@ void gaussian_elimination(double *matrix, double *b, double *x, int n, int rank,
         }
         MPI_Bcast(&x[i], 1, MPI_DOUBLE, i % size, MPI_COMM_WORLD);
     }
-
-    // Sincronização opcional (para verificar soluções parciais)
-    /*
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (rank == 0) {
-        printf("Solução parcial após substituição reversa:\n");
-        print_solution(x, n);
-    }
-    */
 }
 
 int main(int argc, char **argv) {
@@ -151,12 +133,6 @@ int main(int argc, char **argv) {
     // Broadcast dos dados
     MPI_Bcast(matrix, n * n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     MPI_Bcast(b, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    // Impressão inicial
-    /* if (rank == 0) {
-        printf("Matriz inicial carregada (A|b):\n");
-        print_matrix(matrix, b, N);
-    } */
 
     t_inicial = MPI_Wtime();
 
